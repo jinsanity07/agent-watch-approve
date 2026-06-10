@@ -2,24 +2,37 @@
   "env": {
     "PUSHCUT_KEY": "REPLACE_WITH_YOUR_PUSHCUT_API_KEY",
     "NTFY_TOPIC": "REPLACE_WITH_A_LONG_RANDOM_SECRET_TOPIC",
-    "PUSHCUT_NOTIF": "claude",
+    "PUSHCUT_NOTIF": "My First Notification",
+    "HTTPS_PROXY": "http://127.0.0.1:7890",
+    "PUSHCUT_DEVICES": "iPhone,watch",
     "PUSHCUT_SOUND": "default",
     "PUSHCUT_TIME_SENSITIVE": "1",
-    "WATCH_AGENT_LABEL": "Claude",
     "APPROVE_WAIT": "240",
     "APPROVE_TIMEOUT_DECISION": "ask",
-    "HTTPS_PROXY": "",
-    "WATCH_DANGER_ONLY": "0"
+    "WATCH_DANGER_ONLY": "1",
+    "WATCH_NONDANGER_DECISION": "allow",
+    "WATCH_PROTECT_PATHS": "watch-hooks"
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|Write|Edit|MultiEdit",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
             "command": "python \"/ABSOLUTE/PATH/TO/watch_approve.py\"",
             "timeout": 300
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"/ABSOLUTE/PATH/TO/watch_done.py\"",
+            "timeout": 60
           }
         ]
       }

@@ -1,15 +1,25 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "PermissionRequest": [
       {
-        "matcher": "Bash|apply_patch",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "python \"/ABSOLUTE/PATH/TO/watch_approve.py\"",
-            "command_windows": "python \"C:\\\\ABSOLUTE\\\\PATH\\\\TO\\\\watch_approve.py\"",
-            "statusMessage": "Asking watch for approval",
+            "command": "python \"/ABSOLUTE/PATH/TO/watch_approve.py\" --agent codex",
+            "statusMessage": "Waiting for watch approval",
             "timeout": 300
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"/ABSOLUTE/PATH/TO/watch_done.py\" --agent codex",
+            "timeout": 60
           }
         ]
       }

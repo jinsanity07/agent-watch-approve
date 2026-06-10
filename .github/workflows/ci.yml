@@ -13,4 +13,4 @@ jobs:
         with:
           python-version: "3.x"
       - name: Byte-compile the hook (stdlib only, no deps)
-        run: python -m py_compile watch_approve.py
+        run: python -m py_compile watch_approve.py watch_done.py

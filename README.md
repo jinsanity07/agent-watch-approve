@@ -1,209 +1,252 @@
-# watch-approve
+<div align="center">
 
-Approve your coding agent's actions from your **Apple Watch**.
+# ⌚ agent-watch-approve
 
-When **Claude Code** or **Codex CLI** is about to run a shell command or edit a file, this
-hook pushes a notification to your iPhone / Apple Watch. You tap **Allow** or **Deny** on
-your wrist, and the decision flows back to gate the action — no need to look at the terminal.
+**AI 在干活,你在摸鱼;危险操作抬腕一点,任务跑完手表喊你。**
 
-> 中文文档见 [README.zh-CN.md](./README.zh-CN.md)
+让 **Claude Code** 和 **Codex** 的危险操作推送到你的 **Apple Watch / iPhone** 上审批,
+任务完成自动通知 —— 全程不用回终端。
 
-```
-PreToolUse hook
-  → POST a notification to Pushcut (with Allow/Deny background-request buttons)
-  → it's sent Time-Sensitive, so it reaches the Apple Watch even while the iPhone is in use; you tap Allow / Deny
-  → Pushcut runs the button's background web request → publishes allow/deny to an ntfy topic
-  → the hook reads the result from the ntfy stream
-  → returns permissionDecision (allow / deny / ask) to the agent
-```
+[![CI](https://github.com/ghy196830-del/agent-watch-approve/actions/workflows/ci.yml/badge.svg)](https://github.com/ghy196830-del/agent-watch-approve/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+![Python](https://img.shields.io/badge/Python-3%20stdlib%20only-blue)
+![Agents](https://img.shields.io/badge/Agents-Claude%20Code%20%7C%20Codex-orange)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
-It's a single dependency-free Python file (`watch_approve.py`, standard library only), and it
-**fails safe**: any missing config, network error, or timeout falls back to the agent's normal
-in-terminal approval prompt instead of crashing or blocking forever.
+**[English](./README.en.md)**
 
----
+| Claude Code 的通知 | Codex 的通知 |
+|:---:|:---:|
+| <img src="./assets/clawd-crab.gif" width="320" alt="Claude crab"> | <img src="./assets/gpt-cat.png" width="320" alt="GPT knot cat"> |
+| 🦀 Claude 待批准 / 🦀 任务已完成 | 🤖 Codex 待批准 / 🤖 任务已完成 |
 
-## Why
+</div>
 
-- You're waiting on a long agent run and you're on your phone / away from the keyboard.
-- You want a human gate on dangerous actions (`rm -rf`, `git push --force`, prod deploys) without
-  babysitting the terminal.
-- It works from behind a proxy (designed/tested with a local Clash HTTP proxy), so it's usable in
-  networks where direct access to Pushcut/ntfy is unreliable.
-
-## How it works
-
-The round-trip uses two cheap, scriptable services:
-
-- **[Pushcut](https://www.pushcut.io/)** — sends the push notification with action buttons. Dynamic
-  buttons (injected by this hook) need **Pushcut Pro**.
-- **[ntfy](https://ntfy.sh/)** — a pub/sub topic used as the return channel. The public `ntfy.sh`
-  server works; the topic name acts as the password, so make it long and random.
-
-The button is a **background web request** (not "open URL"), because watchOS only supports
-background web requests in notification actions — not "open app" / "run shortcut" actions. It
-GET-publishes to `https://ntfy.sh/<topic>/publish?message=allow` (or `deny`).
-
-## Requirements
-
-- **Claude Code** and/or **Codex CLI** (both support a `PreToolUse` hook with the same contract).
-- **Python 3** on PATH (standard library only — nothing to `pip install`).
-- A **Pushcut** account (**Pro** for dynamically-injected buttons).
-- The **Pushcut app installed on the Apple Watch** (so the watch can receive + act).
-- An **ntfy** topic (public `ntfy.sh` is fine).
+<!-- 📺 演示视频:在这里贴你的抖音/B站链接 -->
 
 ---
 
-## Setup
+## 它解决什么问题
 
-### 1. Pushcut
-1. Create an account, install the app on iPhone **and Apple Watch**.
-2. Create a Notification (the name goes in `PUSHCUT_NOTIF`, e.g. `claude`). Leave title/text empty —
-   the hook overrides them. With dynamic actions (default) you do **not** need to add buttons by hand.
-3. Get your API key from **Account → API**.
+跑长任务时,agent 时不时停下来问一句「可以执行吗?」——你必须守着终端。这个项目把这件事搬到手腕上:
 
-### 2. ntfy
-Pick a long random topic name, e.g. `myagent_8f3k2j9x`. Nothing to install — just choose it.
+1. **⌚ 远程审批** —— 危险操作(`rm -rf`、`git push --force`、提权、出沙箱……)推送到手表,带 **✅ 允许 / ❌ 拒绝** 按钮,点一下,结果秒回 agent;
+2. **🔔 完成提醒** —— agent 每跑完一轮任务,手表震一下「任务已完成」,你随时回来验收;
+3. **🤖 其余全自动** —— 不危险的操作静默放行(可配),终端再也不弹「yes/no」。
 
-### 3. Install the hook
-Put `watch_approve.py` somewhere stable and point your agent at it.
+两个 Python 脚本,**只用标准库、零依赖**,并且**全程 fail-safe**:配置缺失 / 网络挂了 / 超时,一律退回 agent 自己的终端审批,绝不卡死你的任务。
 
-**Claude Code** — merge [`examples/claude/settings.example.json`](./examples/claude/settings.example.json)
-into `.claude/settings.json` (project) or `~/.claude/settings.json` (global). Set the env values and
-the absolute path to the script.
+```mermaid
+sequenceDiagram
+    participant A as Claude Code / Codex
+    participant H as watch_approve.py
+    participant P as Pushcut 云
+    participant W as ⌚ Apple Watch
+    participant N as ntfy.sh
+    A->>H: 危险操作,触发 hook
+    H->>P: 触发通知(注入 ✅/❌ 按钮)
+    P->>W: 限时通知,直达手表
+    W->>N: 点按钮 → 后台请求发布 allow/deny
+    N-->>H: hook 从 stream 读到结果
+    H-->>A: 放行 / 拒绝
+```
 
-**Codex CLI** — put [`examples/codex/hooks.example.json`](./examples/codex/hooks.example.json) at
-`~/.codex/hooks.json` (or `<repo>/.codex/hooks.json`). Codex doesn't inject env vars per hook, so set
-`PUSHCUT_KEY` / `NTFY_TOPIC` / `HTTPS_PROXY` / `PUSHCUT_SOUND` etc. as **system/user environment
-variables**. Then trust the hook with the `/hooks` command (or run `codex --dangerously-bypass-hook-trust`
-once for a one-off).
+## 前置条件
 
-> Codex's `PreToolUse` covers `Bash`, `apply_patch` (file edits), and MCP tools. Claude Code's covers
-> `Bash`, `Write`, `Edit`, `MultiEdit`, etc. The matcher in each example reflects this.
+- **Claude Code** 和/或 **Codex CLI**
+- **Python 3**(在 PATH 上;只用标准库,无需 `pip install`)
+- **[Pushcut](https://www.pushcut.io/)** 账号(hook 动态注入按钮需要 **Pro**),iPhone **和 Apple Watch 都装上 app**
+- 一个 **[ntfy](https://ntfy.sh/)** topic(公共 ntfy.sh 即可,**topic 名就是密码,取长随机串**)
+- (国内)一个本地 HTTP 代理,如 Clash 的 `http://127.0.0.1:7890`
 
-### 4. Test it (without the agent)
+## 十分钟上手
+
+### 第 0 步:准备 Pushcut 和 ntfy
+
+1. Pushcut 里建一条 Notification(名字随意,填进配置的 `PUSHCUT_NOTIF`),标题/正文/按钮都不用配——hook 会动态覆盖;
+2. **Account → API** 拿 API key;
+3. 想一个长随机 ntfy topic 名,例如 `myagent_8f3k2j9x`(无需注册)。
+
+### 第 1 步:放脚本
+
+把 `watch_approve.py`、`watch_done.py`、`watch.env` 放进一个**固定目录**,例如 `C:\Users\你\watch-hooks\`(macOS/Linux 如 `~/watch-hooks/`):
+
 ```bash
-# set env first (see table below), then:
-echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo hello"}}' \
-  | python /path/to/watch_approve.py
-```
-Tap **Allow** (the alert is Time-Sensitive by default, so it reaches the watch even if the iPhone is unlocked), and you should immediately get:
-```json
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"watch-approve: approved on watch."}}
+git clone https://github.com/ghy196830-del/agent-watch-approve.git
+cp agent-watch-approve/watch_approve.py agent-watch-approve/watch_done.py ~/watch-hooks/
+cp agent-watch-approve/watch.env.example ~/watch-hooks/watch.env   # 然后填入你的 key/topic
 ```
 
----
+> **为什么要 `watch.env`?** hook 子进程的环境变量取决于「谁启动了 agent」,Codex 还**不会**把
+> 自己配置里的 env 传给 hook。脚本启动时会读同目录的 `watch.env` **兜底**(只填补缺失项,
+> 真实环境变量优先),这样从 VS Code、终端、任何地方启动 agent 都能工作。
 
-## Configuration (environment variables)
+### 第 2 步:接 Claude Code
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PUSHCUT_KEY` | — | **Required.** Pushcut API key. |
-| `NTFY_TOPIC` | — | **Required.** Your secret ntfy topic (acts as a password — make it random). |
-| `PUSHCUT_NOTIF` | `claude` | Name of the Pushcut notification to trigger. |
-| `HTTPS_PROXY` | — | Proxy for all outbound requests, e.g. `http://127.0.0.1:7890`. Falls back to `HTTP_PROXY`. |
-| `PUSHCUT_SOUND` | `default` | Notification sound. **Without one the watch won't vibrate.** `vibrateOnly` = buzz, no sound; `none` = silent. |
-| `PUSHCUT_TIME_SENSITIVE` | `1` | `1` = mark the alert **Time-Sensitive** → reaches the **Apple Watch even while the iPhone is in use**, and breaks through Focus/DND. `0` = normal alert (watch only when the phone is locked). |
-| `WATCH_AGENT_LABEL` | `Agent` | Title prefix, e.g. `Claude` → "Claude: Bash". |
-| `APPROVE_WAIT` | `240` | Seconds to wait for the reply. Keep it **below** the hook `timeout` (300). |
-| `APPROVE_TIMEOUT_DECISION` | `ask` | Decision if nobody replies in time: `ask` / `allow` / `deny`. |
-| `PUSHCUT_DYNAMIC_ACTIONS` | `1` | `1` = hook injects Allow/Deny buttons (Pushcut Pro). `0` = use app-configured actions. |
-| `PUSHCUT_DEVICES` | — | Comma-separated device names to target (see `GET /v1/devices`). Empty = all. |
-| `PUSHCUT_RETRIES` | `12` | Retry count for triggering Pushcut (handles flaky TLS to api.pushcut.io). |
-| `PUSHCUT_TIMEOUT` | `6` | Per-attempt timeout (s) for triggering Pushcut. |
-| `NTFY_BASE` | `https://ntfy.sh/` | ntfy server base URL (change if you self-host). |
-| `WATCH_DANGER_ONLY` | `0` | `1` = only "risky" commands ping the watch; everything else returns `ask` instantly (see below). |
-| `WATCH_DANGER_EXTRA` | — | Extra danger regexes to add (newline-separated), case-insensitive. |
-| `WATCH_DANGER_REGEX` | — | A single regex that **replaces** the built-in danger list entirely. |
-| `WATCH_NONDANGER_DECISION` | `ask` | (danger-only mode) what to do with non-risky ops: `ask` (defer to the terminal), `allow` (auto-run silently — no watch, no prompt), `deny`. |
+把 [`examples/claude/settings.example.json`](./examples/claude/settings.example.json) 合并进
+`~/.claude/settings.json`(全局)或项目的 `.claude/settings.json`,改好脚本绝对路径。重启 Claude Code 生效。
 
----
+关键就两块:`PreToolUse`(审批)+ `Stop`(完成提醒),matcher 用 `"*"` 配合 danger-only(见下文「自动驾驶」)。
 
-## Reducing noise (danger-only mode)
+### 第 3 步:接 Codex
 
-By default the hook asks for approval on **every** tool call matched by `matcher` — that can be a lot.
-Set `WATCH_DANGER_ONLY=1` and the hook only pings your watch for **risky** commands (the rest return
-`ask` immediately, so the agent behaves normally and your watch stays quiet).
+把 [`examples/codex/hooks.example.json`](./examples/codex/hooks.example.json) 放到 `~/.codex/hooks.json`,改好脚本绝对路径。
 
-Recommended low-noise setup: `WATCH_DANGER_ONLY=1` plus a narrow `"matcher": "Bash"`. (A narrow matcher
-stays quiet, but tools it doesn't list fall back to the terminal — see **Auto-pilot** below for a fully
-terminal-free variant.)
+**Codex 的三个专属注意点(都踩过坑了):**
 
-The built-in danger list flags things like `rm -rf`, `sudo`, `git push --force`, `git reset --hard`,
-`dd`, `mkfs`, `chmod 777`, `shutdown`/`reboot`, `kill`, `drop/truncate table`, `delete from`,
-`curl ... | sh`, `docker prune`, `terraform destroy`, `kubectl delete`, PowerShell `Remove-Item -Recurse
--Force`, etc. Extend it with `WATCH_DANGER_EXTRA`, or replace it wholesale with `WATCH_DANGER_REGEX`.
+1. **挂的是 `PermissionRequest` 事件,不是 `PreToolUse`。** Codex 只在自己要弹审批时(提权 / 出沙箱 / 联网等)触发它,hook 回 allow/deny;不回应就走正常终端审批。语义刚好和手表审批对齐。
+   (Codex 的 `PreToolUse` 拦不到新版 shell 通道,且不支持 `ask`,别用它做审批。)
+2. **hook 必须先「信任」才会跑,而且改一次就要重新信任** —— 否则被**静默跳过**,无任何报错。在 Codex TUI 里运行 **`/hooks`** → 找到这两条 hook → review & trust。
+3. **`codex exec`(非交互模式)永远不会触发 `PermissionRequest`**(它的 approval policy 是 never)。测试审批请用交互式会话;`Stop` 完成提醒在 exec 下正常触发。
 
-> If you enable danger-only, test with a risky command (e.g. `rm -rf /tmp/x`) — a plain `echo hello`
-> won't trigger a notification by design.
+### 第 4 步:不经过 agent,先单测一发
 
-**Auto-pilot with a safety net.** By default, danger-only sends non-risky ops to `ask` (so the terminal
-may still prompt). If you'd rather *never* touch the terminal — "only risky ops gate on my watch,
-everything else just runs" — combine **`"matcher": "*"`** with `WATCH_DANGER_ONLY=1` and
-`WATCH_NONDANGER_DECISION=allow`. Then *every* tool routes through the hook: non-risky ones (reads, web
-search, MCP calls, …) are auto-approved silently, and only danger-list matches buzz your watch.
+```bash
+# Claude 风格(PreToolUse):
+echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf /tmp/x"}}' \
+  | python ~/watch-hooks/watch_approve.py
 
-> **Why `"matcher": "*"` and not a narrow one?** A matcher is a whitelist — any tool it *doesn't* list
-> (`WebSearch`, MCP tools, tomorrow's new tool, …) skips the hook entirely and falls back to the agent's
-> **in-terminal** prompt, which never reaches your watch or phone. A whitelist always misses the next new
-> tool, so for a no-terminal setup, match **all** tools and let the danger filter decide. (Claude Code
-> docs: `"*"`, `""`, or an omitted matcher all mean "match every tool".)
+# Codex 风格(PermissionRequest):
+echo '{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"git push --force"}}' \
+  | python ~/watch-hooks/watch_approve.py --agent codex
 
-> ⚠️ Two things to keep in mind: (1) Only pair `"matcher": "*"` with `WATCH_DANGER_ONLY=1` — a `"*"`
-> matcher *without* danger-only would buzz your watch on **every** tool call (including every file read).
-> (2) With `WATCH_NONDANGER_DECISION=allow`, anything the danger list does **not** catch runs without any
-> confirmation. The danger regex is your only gate — review/extend it (`WATCH_DANGER_EXTRA`) to taste.
+# 完成提醒:
+python ~/watch-hooks/watch_done.py < /dev/null
+```
 
----
+手表上点 **✅ 允许**,第一条会立刻输出 `permissionDecision: "allow"`,第二条输出
+`decision: {"behavior": "allow"}`(Codex 格式,脚本按事件自动切换)。
 
-## Apple Watch notes (important)
+> ⚠️ 开了 danger-only(默认推荐配置)后,要用**危险命令**测试——`echo hello` 按设计不弹通知。
 
-- **Time-Sensitive is what gets it to the watch reliably.** By default a *normal* notification only
-  reaches the Apple Watch when the iPhone is **locked/asleep**; while the phone is unlocked/in use, iOS
-  keeps the alert on the phone (Apple's routing, not a bug). Marking it **Time-Sensitive**
-  (`PUSHCUT_TIME_SENSITIVE=1`, the default) breaks through that, so it reaches the watch **even while
-  you're using the iPhone** — and through Focus / Do Not Disturb. A/B-tested on-device: two
-  otherwise-identical notifications, only the Time-Sensitive one reached the watch while the phone was in
-  use. (Needs Time-Sensitive allowed for Pushcut under iOS Settings → Notifications — the default.)
-- **Install the Pushcut app on the watch.** Without it the watch can't act on the notification.
-- **Buttons must be background web requests** (this hook does that). watchOS rejects "open app / run
-  shortcut" actions with *"actions that run shortcuts or open apps are not supported on watchOS"*.
-- **Set a sound** (`PUSHCUT_SOUND=default`) or the watch won't vibrate.
-- **If a device suddenly stops receiving, reopen the Pushcut app on it.** The app's push token can go stale after it's been killed/backgrounded for a while — Pushcut keeps reporting "success" while nothing arrives. Reopening re-registers the token (and re-syncs the watch).
+## 自动驾驶模式(推荐配置)
 
-## Latency
+`watch.env.example` 里的默认值就是这套「**危险才打扰,其余全自动**」:
 
-There's an inherent floor of a few seconds: the notification trigger round-trips to Pushcut, and the
-reply round-trips back through ntfy, plus Apple's watch delivery. If you're behind a slow/unstable
-proxy, picking a faster proxy node for `api.pushcut.io` and `ntfy.sh` helps the most.
+```
+WATCH_DANGER_ONLY=1            # 只有命中危险清单的操作才上手表
+WATCH_NONDANGER_DECISION=allow # 其余静默放行(不弹手表、不弹终端)
+```
 
-## Troubleshooting
+配合 Claude Code 的 `"matcher": "*"`:**所有**工具调用都过 hook,非危险的(读文件、搜索、MCP……)
+静默放行,只有真正危险的才震你手腕。为什么不用白名单 matcher?——白名单永远会漏掉下一个新工具
+(`WebSearch`、新 MCP……),漏掉的会退回**终端**弹窗,你的手表永远收不到。
 
-Read `permissionDecisionReason` in the output — it says what happened:
+内置危险清单覆盖:`rm -rf`、`sudo`、`git push --force`、`git reset --hard`、`dd`、`mkfs`、
+`chmod 777`、`shutdown`、`kill`、`DROP/TRUNCATE TABLE`、`DELETE FROM`、`curl | sh`、
+`docker rm/prune`、`terraform destroy`、`kubectl delete`、PowerShell `Remove-Item -Recurse -Force` 等。
+`WATCH_DANGER_EXTRA` 可追加,`WATCH_DANGER_REGEX` 可整体替换。
 
-| Symptom | Cause / fix |
-|---------|-------------|
-| `Pushcut returned HTTP 404` | No notification with that `PUSHCUT_NOTIF` name exists in Pushcut's cloud (create it, and make sure the app synced it). |
-| `Pushcut returned HTTP 401/403` | Wrong `PUSHCUT_KEY`. |
-| `failed to reach Pushcut (...)` | Proxy/network down, or repeated TLS failures (raise `PUSHCUT_RETRIES`). |
-| Hook sends with no error, but **no device** receives the notification | Pushcut's API accepted the push (returns success) but APNs didn't deliver it — most often a **stale push token** because the Pushcut app was killed / backgrounded too long. **Open the Pushcut app on the iPhone** to re-register its token (this also re-syncs the watch). Remember: a Pushcut "success" only means the cloud *accepted* the push, not that a device *received* it. |
-| Phone buzzes, watch doesn't | Keep `PUSHCUT_TIME_SENSITIVE=1` (default) so the alert is Time-Sensitive and reaches the watch while the phone is in use. Also check the Pushcut app is installed on the watch and that Time-Sensitive is allowed for Pushcut in iOS Settings → Notifications. |
-| Agent still prompts in the **terminal** (never reaches the watch/phone) | That tool isn't covered by your `matcher` (a whitelist) — e.g. `WebSearch` or MCP tools. Use `"matcher": "*"` together with `WATCH_DANGER_ONLY=1` + `WATCH_NONDANGER_DECISION=allow` so every tool routes through the hook. |
-| Watch shows it but tapping says "not supported" | The action isn't a background web request (default config already is). |
-| No vibration | Set `PUSHCUT_SOUND=default` (or `vibrateOnly`). |
-| Notification text shows as `???` (Windows manual test) | A PowerShell artifact, not the hook: piping non-ASCII into a native program re-encodes it as `?`, because `$OutputEncoding` defaults to ASCII. The hook itself reads UTF-8 and sends `\uXXXX`-escaped JSON, which renders correctly when the agent runs it. To test non-ASCII on Windows, feed the JSON from a UTF-8 file or via environment variables instead of an inline pipe. |
+> ⚠️ 代价要心里有数:`allow` 模式下,危险清单**没逮到**的操作会无确认直接执行。
+> 危险正则是唯一关卡,按自己的口味扩充它。
 
-Any failure path returns `ask`, so the agent just falls back to its normal prompt — it never hangs.
+**手表上看到的不是命令原文**,而是一句人话 + 目标文件名,例如:
 
-## Security
+> 🗑️ 删除文件夹:node_modules
+> ⚠️ git 强制推送:main
+> 📝 修改文件:app.py、readme.md
 
-- Secrets (`PUSHCUT_KEY`, `NTFY_TOPIC`) are read from env vars and never hardcoded. Don't commit a
-  real `settings.json` — `.gitignore` excludes it.
-- The ntfy topic name is the only thing guarding your return channel on public `ntfy.sh`. Use a long
-  random value, or self-host ntfy with auth (`NTFY_BASE`).
-- `allow` makes the agent skip its own permission prompt. Scope the `matcher` to the tools you actually
-  want gated.
+**防 agent「自改 hook」**:设 `WATCH_PROTECT_PATHS=watch-hooks` 后,任何对脚本目录的**写操作**
+也强制上手表(🛡️ 改 hook 脚本),agent 想偷偷解除你的管控?先过你手腕这关。
+
+## 双 agent 视觉区分
+
+同一份脚本服务两个 agent,通知一眼可辨(`--agent codex` 或 `WATCH_AGENT=codex` 切换):
+
+| | 标题 | 配图(透明背景矮横幅,走 jsDelivr CDN,国内可达) |
+|---|---|---|
+| **Claude Code** | 🦀 Claude 待批准 / 任务已完成 | 官方像素螃蟹 Clawd **动图**(手机上会眨眼挪腿) |
+| **Codex** | 🤖 Codex 待批准 / 任务已完成 | GPT 结猫(仓库 `assets/gpt-cat.png`;另有官方结图标 `gpt-logo.png` 备选) |
+
+想换图:`PUSHCUT_IMAGE=<你的图片URL>`(对两个 agent 统一生效),`none` 则不带图。
+
+## 配置参考(环境变量 / watch.env)
+
+**核心**
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `PUSHCUT_KEY` | — | **必填。** Pushcut API key |
+| `NTFY_TOPIC` | — | **必填。** 回传通道 topic(就是密码,取长随机) |
+| `PUSHCUT_NOTIF` | `claude` | Pushcut 里那条通知的名字 |
+| `HTTPS_PROXY` | — | 出网代理,如 `http://127.0.0.1:7890`(回退 `HTTP_PROXY`) |
+| `WATCH_AGENT` | `claude` | `claude` / `codex`;命令行 `--agent` 优先级更高 |
+| `WATCH_ENV_FILE` | 脚本旁的 `watch.env` | 兜底配置文件路径 |
+
+**送达(Apple Watch 实测三件套)**
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `PUSHCUT_DEVICES` | (全部设备) | **建议 `iPhone,watch`**:直接点名手表,绕过 iOS 镜像规则(设备名看 Pushcut `GET /v1/devices`) |
+| `PUSHCUT_SOUND` | `default` | **不带声音手表不震!** `vibrateOnly`=只震不响,`none`=静默 |
+| `PUSHCUT_TIME_SENSITIVE` | `1` | 限时通知:**iPhone 在用时也能上手表**,冲破专注/勿扰(实测唯一可靠手段) |
+
+**审批行为**
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `APPROVE_WAIT` | `240` | 等回执秒数(要小于 hook timeout 300) |
+| `APPROVE_TIMEOUT_DECISION` | `ask` | 超时没人点:`ask`(退回终端)/`allow`/`deny` |
+| `WATCH_DANGER_ONLY` | `0` | `1`=只有危险操作上手表 |
+| `WATCH_NONDANGER_DECISION` | `ask` | danger-only 下非危险操作:`ask`/`allow`/`deny` |
+| `WATCH_DANGER_EXTRA` | — | 追加危险正则(换行分隔) |
+| `WATCH_DANGER_REGEX` | — | 整体替换内置危险清单 |
+| `WATCH_PROTECT_PATHS` | — | 逗号分隔子串;写类工具碰到即强制上手表 |
+| `WATCH_DESC_MAX` | `80` | 通知正文最大字符数(手表屏幕小) |
+
+**外观与完成提醒**
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `PUSHCUT_IMAGE` | 按 agent 取预设 | 通知配图 URL;`none`=不带 |
+| `WATCH_DONE_TITLE` / `WATCH_DONE_TEXT` | 按 agent 取预设 | 完成提醒的标题/正文 |
+| `WATCH_DONE_SOUND` | `jobDone` | 完成提醒声音 |
+
+**网络与调试**
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `PUSHCUT_RETRIES` | 审批 `12` / 完成 `8` | 触发 Pushcut 的重试次数(应对代理 TLS 偶发失败) |
+| `PUSHCUT_TIMEOUT` | 审批 `3` / 完成 `6` | 单次触发超时(秒);压短=失败快速重试,降低体感延迟 |
+| `NTFY_BASE` | `https://ntfy.sh/` | 自建 ntfy 时改 |
+| `PUSHCUT_DYNAMIC_ACTIONS` | `1` | `1`=hook 动态注入按钮(需 Pro);`0`=用 app 里手配按钮 |
+| `WATCH_DEBUG_DUMP` | `0` | `1`=每次运行把 hook 原始输入写到 `%TEMP%/watch_*_last_input_<agent>.json` |
+
+## Apple Watch 实战笔记(全是实测踩出来的)
+
+- **限时通知(Time-Sensitive)是手表稳定收到的关键。** 普通通知只有 iPhone 锁屏时才镜像到手表;
+  手机在用时 iOS 会把通知留在手机上。A/B 实测:两条只差这个字段的通知,只有限时那条上了手表。
+  默认已开(`PUSHCUT_TIME_SENSITIVE=1`),同时建议 `PUSHCUT_DEVICES=iPhone,watch` 直接点名手表。
+- **按钮必须是「后台 web 请求」**(本 hook 已是)。watchOS 不支持「打开 app / 跑快捷指令」类按钮。
+- **必须带声音**(`PUSHCUT_SOUND=default`),否则手表不震。
+- **某台设备突然收不到了 → 在它上面重开 Pushcut app。** app 被杀/长期后台会让推送 token 失效,
+  此时 Pushcut API 照样返回「成功」但什么都到不了。重开即恢复(顺带让手表重新同步)。
+- 手表上动图只显示静帧(watchOS 限制);iPhone 展开通知能看到螃蟹动起来。
+
+## 排错
+
+| 现象 | 原因 / 处理 |
+|------|------|
+| Pushcut 返回 404 | 云端没有 `PUSHCUT_NOTIF` 这个名字的通知(去 app 里建,确认已同步) |
+| Pushcut 返回 401/403 | `PUSHCUT_KEY` 不对 |
+| 发送成功但**所有设备**收不到 | 推送 token 失效 → **重开 iPhone 上的 Pushcut app**。「成功」只代表云端接收,不代表设备收到 |
+| 手机收到、手表收不到 | 保持 `PUSHCUT_TIME_SENSITIVE=1` + `PUSHCUT_DEVICES` 点名手表;确认手表装了 Pushcut、iOS 允许其限时通知 |
+| Claude 还是在终端弹确认 | 工具没被 matcher 覆盖 → 用 `"matcher": "*"` + danger-only + `allow`(见自动驾驶) |
+| **Codex 的 hook 完全不触发** | ① 没信任/改后未重新信任 → Codex TUI 跑 `/hooks` review & trust(被跳过时**无任何报错**);② 你在用 `codex exec` 测审批 → 它永远不触发 `PermissionRequest`,换交互式;③ 排查传参:`WATCH_DEBUG_DUMP=1` 看 `%TEMP%` 留痕 |
+| Codex 的 hook 拿不到 key/代理 | Codex 不把 env 传给 hook → 用脚本同目录的 **`watch.env`**(本仓库方案,已内置) |
+| 表上点按钮提示 not supported | 按钮不是后台 web 请求(默认配置已是,别改成 open-url) |
+| 不震动 | `PUSHCUT_SOUND=default`(或 `vibrateOnly`) |
+| Windows 手动测试中文变 `???` | PowerShell 管道编码锅,不是 hook 的问题;真实运行不受影响。测试时用 UTF-8 文件或环境变量传值 |
+
+任何失败路径都返回「退回正常审批」,agent 永远不会因此卡死。
+
+## 安全
+
+- 密钥只从环境变量 / `watch.env` 读取,不硬编码;`.gitignore` 已排除 `*.env`,别把真实配置提交上来。
+- 公共 ntfy.sh 上 topic 名是回传通道唯一防线 → 取长随机串,或自建带鉴权的 ntfy(`NTFY_BASE`)。
+- `WATCH_NONDANGER_DECISION=allow` 等于把非危险操作的放行权交给危险正则,启用前想清楚、按需扩充清单。
+- 建议配 `WATCH_PROTECT_PATHS` 把 hook 脚本自身保护起来,防止 agent 改掉你的管控。
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT —— 见 [LICENSE](./LICENSE)。图标素材:Clawd 螃蟹来自 Claude Code 官方吉祥物;GPT 结猫为本仓库自制衍生图。
