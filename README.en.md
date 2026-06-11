@@ -31,7 +31,7 @@ with ✅ Allow / ❌ Deny buttons, and pings you when each task finishes — no 
   <sub>Risky action → watch buzzes → ✅ one tap, the agent keeps going</sub>
 </div>
 
-▶️ **[Full intro video (30s)](https://cdn.jsdelivr.net/gh/ghy196830-del/agent-watch-approve@main/assets/showcase/intro.mp4)** — opens in your player (fallback: [repo file](./assets/showcase/intro.mp4))
+▶️ **[Full intro video (30s)](https://cdn.jsdelivr.net/gh/ghy196830-del/agent-watch-approve@c757785/assets/showcase/intro.mp4)** — opens in your player (fallback: [repo file](./assets/showcase/intro.mp4))
 
 ### Feature gallery
 
