@@ -1047,10 +1047,6 @@ def main():
     if ASK_QUESTIONS and tool_name == "AskUserQuestion" and HOOK_EVENT != "PermissionRequest":
         handle_question(data, tool_input)  # 内部必 emit,不会返回
 
-    # 2) 关键配置缺失 -> ask 退化(不报错卡住)
-    if missing_config():
-        emit("ask", "watch-approve: %s,退回正常审批。" % _MISSING_MSG)
-
     desc = describe(tool_name, tool_input)
 
     # Codex 的 PermissionRequest:只在 Codex 自己判定「这事需要人批准」(提权/出沙箱/联网等)
@@ -1103,6 +1099,12 @@ def main():
                 emit("deny", "watch-approve: 非危险操作,按配置拒绝。")
             else:
                 emit("ask", "watch-approve: 非危险操作,退回正常审批(未打扰手表)。")
+
+    # 2) 关键配置缺失 -> ask 退化(不报错卡住)。放在 danger-only 非危险快路径之后:
+    # matcher="*" 时,读文件/搜索/MCP 等非危险操作不需要发通知,即使还没配 Pushcut/ntfy
+    # 也应按 WATCH_NONDANGER_DECISION 静默处理;真正危险的才需要配置并退回终端兜底。
+    if missing_config():
+        emit("ask", "watch-approve: %s,退回正常审批。" % _MISSING_MSG)
 
     opener = make_opener()
 

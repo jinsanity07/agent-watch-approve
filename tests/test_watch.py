@@ -339,6 +339,21 @@ class TestEndToEnd(unittest.TestCase):
         self.assertEqual(out["permissionDecision"], "allow")
         self.assertIn("自动放行", out["permissionDecisionReason"])
 
+    def test_danger_only_allows_safe_command_without_notification_config(self):
+        env = clean_env(WATCH_DANGER_ONLY="1", WATCH_NONDANGER_DECISION="allow")
+        p = run_hook({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                      "tool_input": {"command": "echo hello"}}, env=env)
+        out = out_json(p)["hookSpecificOutput"]
+        self.assertEqual(out["permissionDecision"], "allow")
+        self.assertIn("自动放行", out["permissionDecisionReason"])
+
+    def test_matcher_star_readonly_tool_without_config_is_allowed(self):
+        env = clean_env(WATCH_DANGER_ONLY="1", WATCH_NONDANGER_DECISION="allow")
+        p = run_hook({"hook_event_name": "PreToolUse", "tool_name": "mcp__repo__search",
+                      "tool_input": {"query": "how to rm -rf safely"}}, env=env)
+        out = out_json(p)["hookSpecificOutput"]
+        self.assertEqual(out["permissionDecision"], "allow")
+
     def test_danger_only_default_nondanger_is_ask(self):
         env = clean_env(PUSHCUT_KEY="x", NTFY_TOPIC="t", WATCH_DANGER_ONLY="1")
         p = run_hook({"hook_event_name": "PreToolUse", "tool_name": "Bash",
