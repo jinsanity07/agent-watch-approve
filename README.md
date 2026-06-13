@@ -117,8 +117,10 @@ sequenceDiagram
 
 ```bash
 git clone https://github.com/ghy196830-del/agent-watch-approve.git
+mkdir ~/watch-hooks/
 cp agent-watch-approve/watch_approve.py agent-watch-approve/watch_done.py ~/watch-hooks/
-cp agent-watch-approve/watch.env.example ~/watch-hooks/watch.env   # 然后填入你的 key/topic
+cp agent-watch-approve/watch.env.example ~/watch-hooks/watch.env
+nano ~/watch-hooks/watch.env # 然后填入你的 key/topic
 ```
 
 > **为什么要 `watch.env`?** hook 子进程的环境变量取决于「谁启动了 agent」,Codex 还**不会**把
