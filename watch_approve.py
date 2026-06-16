@@ -114,6 +114,22 @@ TIMEOUT_DECISION = os.environ.get("APPROVE_TIMEOUT_DECISION", "ask").strip().low
 if TIMEOUT_DECISION not in ("allow", "deny", "ask"):
     TIMEOUT_DECISION = "ask"
 
+# 等待回执期间「重复提醒」:每隔这么多秒重发一次同一条通知(同样的按钮、同样的本次回执
+# topic,点新旧任何一条都生效),直到收到回应或到 APPROVE_WAIT。默认 120,设 0 关闭(只发
+# 一次)。Pushcut/APNs 不会自动合并,通知中心会叠几条同请求副本——这是「更难错过」的代价。
+try:
+    RENOTIFY_INTERVAL = int(float(os.environ.get("WATCH_RENOTIFY_INTERVAL", "120")))
+except ValueError:
+    RENOTIFY_INTERVAL = 120
+if RENOTIFY_INTERVAL < 0:
+    RENOTIFY_INTERVAL = 0
+
+# 超时仍没人理时,在退回终端之前补发一条**无按钮**「⏰ 你错过了」提醒(best-effort,失败
+# 不阻塞)。默认开;设 0 关。标题/声音可单独配(声音默认沿用普通审批音 PUSHCUT_SOUND,
+# 想让它更扎眼就设成 problem 之类)。ntfy 载体忽略声音。
+MISSED_ALERT = os.environ.get("WATCH_MISSED_ALERT", "1").strip() != "0"
+MISSED_TITLE = os.environ.get("WATCH_MISSED_TITLE", "⏰ 你错过了待处理")
+
 # 是否由 hook 动态注入 Allow/Deny 两个后台按钮(需要 Pushcut Pro)。
 # "1"(默认):你只需在 Pushcut app 里建一条名为 PUSHCUT_NOTIF 的空通知即可,
 #             按钮和它指向的 ntfy URL 都由 hook 在 API 调用里带上。
@@ -174,6 +190,8 @@ ASK_QUESTIONS = os.environ.get("WATCH_ASK_QUESTIONS", "1").strip() != "0"
 QUESTION_TITLE = os.environ.get("WATCH_QUESTION_TITLE", "").strip() or "🤔 Claude 在问你"
 # 选择题通知的声音,和审批区分开(Pushcut 内置音里 "question" 很贴脸;none=不带)。
 QUESTION_SOUND = os.environ.get("WATCH_QUESTION_SOUND", "question").strip()
+# 「你错过了」超时提醒的声音(默认沿用普通审批音;设 WATCH_MISSED_SOUND 让它更扎眼)。
+MISSED_SOUND = (os.environ.get("WATCH_MISSED_SOUND", "").strip() or PUSHCUT_SOUND)
 _OPT_LETTERS = "ABCD"  # AskUserQuestion 一题最多 4 个选项
 _OPT_LABEL_MAX = 24    # 正文里每个选项标签最多保留的字符数(约手表一行的量)
 
@@ -934,6 +952,41 @@ def wait_for_decision(opener, since_ts, deadline, topic=None, tokens=None):
     return None
 
 
+def wait_with_renotify(opener, since_ts, deadline, topic, resend, tokens=None):
+    """同 wait_for_decision,但等待期间每 RENOTIFY_INTERVAL 秒调用一次 resend() 重发通知
+    (best-effort,失败吞掉、不打断等待),直到收到回执或到 deadline。
+    RENOTIFY_INTERVAL<=0 时退化为单次 wait_for_decision(不重发)。
+    首次发送仍由调用方在 resend 之前自己做(并保留各自的失败处理),这里只管「等待期间补发」:
+    把 [now, deadline] 切成最长 RENOTIFY_INTERVAL 秒的小段,每段没等到结果就 resend 再等下一段。
+    since_ts 全程不变(等于首次发送前记的 t0),所以重连/跨段不会漏掉期间到达的回执。"""
+    if RENOTIFY_INTERVAL <= 0:
+        return wait_for_decision(opener, since_ts, deadline, topic, tokens=tokens)
+    while time.monotonic() < deadline:
+        seg = min(deadline, time.monotonic() + RENOTIFY_INTERVAL)
+        result = wait_for_decision(opener, since_ts, seg, topic, tokens=tokens)
+        if result is not None:
+            return result
+        if time.monotonic() < deadline:
+            try:
+                resend()
+            except Exception:
+                pass  # 重发失败(代理抖动等)不影响继续等待
+    return None
+
+
+def send_missed_alert(opener, body):
+    """超时没人理 -> 在退回终端前补一条无按钮「你错过了」提醒。best-effort:开关关 / 发送失败
+    都静默返回,绝不阻塞 hook 退出。"""
+    if not MISSED_ALERT:
+        return
+    try:
+        send_notification(
+            opener, MISSED_TITLE, body, with_actions=False, retries=5, sound=MISSED_SOUND
+        )
+    except Exception:
+        pass
+
+
 def _dump_topic(reply_topic):
     """调试留痕(需 WATCH_DEBUG_DUMP=1):记下本次回执 topic。出问题时可去 ntfy 拉这个
     topic 的历史(GET /<topic>/json?poll=1&since=...),核对按钮实际发了什么。"""
@@ -1010,8 +1063,16 @@ def handle_question(data, tool_input):
         emit("allow", "watch-approve: 选择题推送手表失败,改在终端弹出。")
 
     tokens = set("opt" + c for c in _OPT_LETTERS.lower()[: len(q["labels"])]) | {"term"}
+
+    def _resend():
+        send_notification(
+            opener, QUESTION_TITLE, question_body(q) + suffix,
+            reply_topic=reply_topic, sound=QUESTION_SOUND,
+            buttons=question_buttons(len(q["labels"])),
+        )
+
     try:
-        choice = wait_for_decision(opener, t0, deadline, reply_topic, tokens=tokens)
+        choice = wait_with_renotify(opener, t0, deadline, reply_topic, _resend, tokens=tokens)
     except Exception:
         choice = None
 
@@ -1023,6 +1084,8 @@ def handle_question(data, tool_input):
             % (_OPT_LETTERS[i], q["labels"][i]),
             updated_input=answered_input(tool_input, q, i),
         )
+    if choice != "term":  # 超时(非「终端查看」)-> 补一条「你错过了」再退终端
+        send_missed_alert(opener, "🤔 %s\n(%ss 无回应,已退回终端)" % (question_body(q), APPROVE_WAIT))
     emit(
         "allow",
         "watch-approve: %s,选择题改在终端弹出。"
@@ -1152,9 +1215,12 @@ def main():
             % type(e).__name__,
         )
 
-    # 4) 等手表回执(只听本次审批的回执 topic)
+    # 4) 等手表回执(只听本次审批的回执 topic);等待期间每 RENOTIFY_INTERVAL 秒重发一次。
+    def _resend():
+        send_notification(opener, title, text, reply_topic=reply_topic)
+
     try:
-        decision = wait_for_decision(opener, t0, deadline, reply_topic)
+        decision = wait_with_renotify(opener, t0, deadline, reply_topic, _resend)
     except Exception:
         decision = None
 
@@ -1165,6 +1231,7 @@ def main():
     elif decision == "term":
         emit("ask", "watch-approve: 已在手表上选择「终端查看」,退回终端审批。")
     else:
+        send_missed_alert(opener, "%s\n(%ss 无回应,已退回终端)" % (text, APPROVE_WAIT))
         emit(
             TIMEOUT_DECISION,
             "watch-approve: %ss 内无回应,按超时策略返回 %s。"

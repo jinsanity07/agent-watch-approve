@@ -303,6 +303,9 @@ Claude 有时不是要批准,而是抛一道**多选决策题**(`AskUserQuestion
 |------|------|------|
 | `APPROVE_WAIT` | `240` | 等回执秒数(要小于 hook timeout 300) |
 | `APPROVE_TIMEOUT_DECISION` | `ask` | 超时没人点:`ask`(退回终端)/`allow`/`deny` |
+| `WATCH_RENOTIFY_INTERVAL` | `120` | 等待期间每隔 N 秒重发一次同一条通知(点新旧任一条都生效),更难错过;`0`=只发一次 |
+| `WATCH_MISSED_ALERT` | `1` | 超时仍没人理 → 退回终端前补一条无按钮「⏰ 你错过了」提醒;`0`=关 |
+| `WATCH_MISSED_TITLE` / `WATCH_MISSED_SOUND` | `⏰ 你错过了待处理` / 同审批音 | 上面那条提醒的标题 / 声音 |
 | `WATCH_DANGER_ONLY` | `0` | `1`=只有危险操作上手表 |
 | `WATCH_NONDANGER_DECISION` | `ask` | danger-only 下非危险操作:`ask`/`allow`/`deny` |
 | `WATCH_DANGER_EXTRA` | — | 追加危险正则(换行分隔) |
