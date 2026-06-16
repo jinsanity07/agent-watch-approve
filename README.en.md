@@ -315,6 +315,9 @@ Override with `PUSHCUT_IMAGE=<url>` (applies to both agents), or `none` to drop 
 |----------|---------|-------------|
 | `APPROVE_WAIT` | `240` | Seconds to wait for the tap (keep below the hook timeout of 300) |
 | `APPROVE_TIMEOUT_DECISION` | `ask` | If nobody answers: `ask` (defer to terminal) / `allow` / `deny` |
+| `WATCH_RENOTIFY_INTERVAL` | `120` | While waiting, re-send the same notification every N seconds (tapping any copy works) so it's harder to miss; `0` = send once |
+| `WATCH_MISSED_ALERT` | `1` | On timeout with no answer, push a button-less "⏰ you missed one" reminder before deferring to the terminal; `0` = off |
+| `WATCH_MISSED_TITLE` / `WATCH_MISSED_SOUND` | `⏰ 你错过了待处理` / approval sound | Title / sound for that reminder |
 | `WATCH_DANGER_ONLY` | `0` | `1` = only risky operations go to the watch |
 | `WATCH_NONDANGER_DECISION` | `ask` | In danger-only mode, non-risky ops: `ask` / `allow` / `deny` |
 | `WATCH_DANGER_EXTRA` | — | Extra danger regexes (newline-separated) |

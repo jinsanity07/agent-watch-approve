@@ -154,6 +154,161 @@ class TestProtectedWrite(unittest.TestCase):
         self.assertEqual(p.stdout.decode("utf-8").strip(), "False", p.stderr)
 
 
+class TestTerminalForced(unittest.TestCase):
+    def test_write_to_settings_is_forced(self):
+        self.assertTrue(
+            wa.is_terminal_forced("Write", {"file_path": r"C:\u\.claude\settings.json"})
+        )
+
+    def test_write_to_global_claude_md_is_forced(self):
+        # ~/.claude/CLAUDE.md 会被 Claude Code 强制弹终端 -> 也该推手表提醒
+        self.assertTrue(
+            wa.is_terminal_forced("Write", {"file_path": r"C:\Users\me\.claude\CLAUDE.md"})
+        )
+        self.assertTrue(
+            wa.is_terminal_forced("Edit", {"file_path": "/home/me/.claude/CLAUDE.md"})
+        )
+
+    def test_shell_touching_claude_projects_is_forced(self):
+        # shell(New-Item 等)建/写 .claude/projects(含 memory)会被强制弹终端 -> 推提醒
+        cmd = r'New-Item -ItemType Directory "C:\u\.claude\projects\P\memory"'
+        self.assertTrue(wa.is_terminal_forced("PowerShell", {"command": cmd}))
+        self.assertTrue(
+            wa.is_terminal_forced("Bash", {"command": "echo x >> ~/.claude/projects/p/memory/a.md"})
+        )
+
+    def test_write_tool_to_memory_md_not_forced(self):
+        # 写类工具写记忆 .md 根本不弹终端,不该误推提醒(projects 子串只对 shell 生效)
+        self.assertFalse(
+            wa.is_terminal_forced("Write", {"file_path": r"C:\u\.claude\projects\P\memory\a.md"})
+        )
+
+    def test_shell_to_normal_path_not_forced(self):
+        self.assertFalse(
+            wa.is_terminal_forced("PowerShell", {"command": r'New-Item -ItemType Directory "D:\x\y"'})
+        )
+
+    def test_master_switch_disables_shell_table_too(self):
+        # 主开关清空 -> 整套提醒(含 shell 专用表)关闭
+        code = (
+            "import watch_approve as w, sys;"
+            "sys.stdout.write(str(w.is_terminal_forced('Bash', {'command': '~/.claude/projects/p/memory/a'})))"
+        )
+        p = run_py(code, env=clean_env(WATCH_TERMINAL_FORCED_PATHS=""))
+        self.assertEqual(p.stdout.decode("utf-8").strip(), "False", p.stderr)
+
+
+class TestRenotify(unittest.TestCase):
+    """等待期间重复提醒:wait_with_renotify 的调度(注入假的 wait_for_decision,无网络)。"""
+
+    def setUp(self):
+        self._orig_wait = wa.wait_for_decision
+        self._orig_interval = wa.RENOTIFY_INTERVAL
+
+    def tearDown(self):
+        wa.wait_for_decision = self._orig_wait
+        wa.RENOTIFY_INTERVAL = self._orig_interval
+
+    def _patch_wait(self, returns):
+        """让 wait_for_decision 依次返回 returns 里的值(用尽后恒返回 None),并记录调用次数。"""
+        seq = list(returns)
+        calls = {"n": 0}
+
+        def fake(opener, since_ts, deadline, topic=None, tokens=None):
+            calls["n"] += 1
+            return seq.pop(0) if seq else None
+
+        wa.wait_for_decision = fake
+        return calls
+
+    def test_interval_zero_single_wait_no_resend(self):
+        wa.RENOTIFY_INTERVAL = 0
+        calls = self._patch_wait(["allow"])
+        resends = {"n": 0}
+        out = wa.wait_with_renotify(None, 0, time.monotonic() + 5, "t",
+                                    lambda: resends.__setitem__("n", resends["n"] + 1))
+        self.assertEqual(out, "allow")
+        self.assertEqual(calls["n"], 1)
+        self.assertEqual(resends["n"], 0)
+
+    def test_decision_first_segment_no_resend(self):
+        wa.RENOTIFY_INTERVAL = 1
+        self._patch_wait(["allow"])
+        resends = {"n": 0}
+        out = wa.wait_with_renotify(None, 0, time.monotonic() + 5, "t",
+                                    lambda: resends.__setitem__("n", resends["n"] + 1))
+        self.assertEqual(out, "allow")
+        self.assertEqual(resends["n"], 0)
+
+    def test_resends_until_decision(self):
+        wa.RENOTIFY_INTERVAL = 1
+        self._patch_wait([None, None, "deny"])  # 两段没结果 -> 重发两次 -> 第三段拿到 deny
+        resends = {"n": 0}
+        out = wa.wait_with_renotify(None, 0, time.monotonic() + 5, "t",
+                                    lambda: resends.__setitem__("n", resends["n"] + 1))
+        self.assertEqual(out, "deny")
+        self.assertEqual(resends["n"], 2)
+
+    def test_resend_failure_does_not_abort(self):
+        wa.RENOTIFY_INTERVAL = 1
+        self._patch_wait([None, "allow"])
+
+        def boom():
+            raise RuntimeError("proxy hiccup")
+
+        out = wa.wait_with_renotify(None, 0, time.monotonic() + 5, "t", boom)
+        self.assertEqual(out, "allow")  # 重发抛错被吞,继续等到了 allow
+
+    def test_timeout_returns_none(self):
+        wa.RENOTIFY_INTERVAL = 1
+        self._patch_wait([])  # 永远 None
+        out = wa.wait_with_renotify(None, 0, time.monotonic() + 0.2, "t", lambda: None)
+        self.assertIsNone(out)
+
+
+class TestMissedAlert(unittest.TestCase):
+    """超时补发「你错过了」提醒的开关与调用形态(注入假的 send_notification)。"""
+
+    def setUp(self):
+        self._orig_send = wa.send_notification
+        self._orig_flag = wa.MISSED_ALERT
+
+    def tearDown(self):
+        wa.send_notification = self._orig_send
+        wa.MISSED_ALERT = self._orig_flag
+
+    def _patch_send(self):
+        captured = []
+        wa.send_notification = lambda *a, **k: captured.append((a, k))
+        return captured
+
+    def test_disabled_sends_nothing(self):
+        wa.MISSED_ALERT = False
+        captured = self._patch_send()
+        wa.send_missed_alert(None, "body")
+        self.assertEqual(captured, [])
+
+    def test_enabled_sends_buttonless(self):
+        wa.MISSED_ALERT = True
+        captured = self._patch_send()
+        wa.send_missed_alert(None, "body")
+        self.assertEqual(len(captured), 1)
+        self.assertFalse(captured[0][1].get("with_actions", True))
+
+    def test_send_failure_swallowed(self):
+        wa.MISSED_ALERT = True
+
+        def boom(*a, **k):
+            raise RuntimeError("network down")
+
+        wa.send_notification = boom
+        wa.send_missed_alert(None, "body")  # 不应抛
+
+    def test_default_interval_is_120(self):
+        self.assertEqual(self._orig_flag, True)  # 默认开
+        self.assertEqual(wa.RENOTIFY_INTERVAL, 120)  # 默认 120s
+
+
 class TestQuestionParsing(unittest.TestCase):
     TI = {
         "questions": [
