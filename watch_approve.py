@@ -411,9 +411,10 @@ def is_protected_write(tool_name, tool_input, cwd=""):
 # hook 改变不了「必须去终端点」的事实,但它仍会先触发(#41615:"Hook fires but prompt
 # still shows"),所以能**给手表/手机推一条无按钮提醒**:"去终端确认",让你不至于对着
 # 静默卡住的终端发呆。匹配子串(大小写不敏感,逗号分隔)。
-# 默认只点名 .claude 下的 settings/hooks —— **特意不写成整个 ".claude"**,否则会误伤
-# ~/.claude/projects/**/memory/(记忆文件,根本不弹终端)和搬出去的 watch-hooks。
-# 想加别的强制终端路径用 WATCH_TERMINAL_FORCED_PATHS 覆盖;设空串则关闭整套提醒。
+# 默认只点名 .claude 下的 settings/hooks/skills —— **特意不写成整个 ".claude"**,否则会
+# 误伤 ~/.claude/projects/**/memory/ 里写类工具(Write/Edit)写记忆 .md(根本不弹终端)
+# 和搬出去的 watch-hooks。想加别的强制终端路径用 WATCH_TERMINAL_FORCED_PATHS 覆盖;
+# 设空串则关闭整套提醒(含下面的 shell 专用表)。
 TERMINAL_FORCED_PATHS = [
     p.strip().lower()
     for p in os.environ.get(
@@ -426,6 +427,20 @@ TERMINAL_FORCED_PATHS = [
     if p.strip()
 ]
 
+# 额外:**只对 shell(Bash/PowerShell)命令**生效的强制终端路径。
+# 缘由:`New-Item`/`mkdir`/`ni` 等 shell 操作碰 .claude\projects(含记忆目录)会被
+# Claude Code 写死的敏感路径确认强制弹终端,但写类工具(Write/Edit)写记忆 .md 不弹 ——
+# 所以这些子串**只在 shell 命令里匹配**,写类工具不受影响,避免每次写记忆都误震手表。
+# 受主开关 WATCH_TERMINAL_FORCED_PATHS 节制:主表设空串=整套提醒关,这张也一起失效。
+TERMINAL_FORCED_SHELL_PATHS = [
+    p.strip().lower()
+    for p in os.environ.get(
+        "WATCH_TERMINAL_FORCED_SHELL_PATHS",
+        ".claude\\projects,.claude/projects",
+    ).split(",")
+    if p.strip()
+]
+
 
 def is_terminal_forced(tool_name, tool_input):
     """该操作会被 Claude Code 强制弹终端(hook 拦不住)-> True(只提醒、不做手表审批)。"""
@@ -433,12 +448,14 @@ def is_terminal_forced(tool_name, tool_input):
         return False
     if tool_name in _WRITE_TOOLS:
         text = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
+        paths = TERMINAL_FORCED_PATHS
     elif tool_name in ("Bash", "PowerShell"):
         text = str(tool_input.get("command") or "")
+        paths = TERMINAL_FORCED_PATHS + TERMINAL_FORCED_SHELL_PATHS
     else:
         return False
     text = text.lower()
-    return bool(text) and any(p in text for p in TERMINAL_FORCED_PATHS)
+    return bool(text) and any(p in text for p in paths)
 
 
 # ---------- 危险操作 -> 简短中文确认标签 ----------

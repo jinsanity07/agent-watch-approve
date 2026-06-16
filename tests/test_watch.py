@@ -154,6 +154,41 @@ class TestProtectedWrite(unittest.TestCase):
         self.assertEqual(p.stdout.decode("utf-8").strip(), "False", p.stderr)
 
 
+class TestTerminalForced(unittest.TestCase):
+    def test_write_to_settings_is_forced(self):
+        self.assertTrue(
+            wa.is_terminal_forced("Write", {"file_path": r"C:\u\.claude\settings.json"})
+        )
+
+    def test_shell_touching_claude_projects_is_forced(self):
+        # shell(New-Item 等)建/写 .claude/projects(含 memory)会被强制弹终端 -> 推提醒
+        cmd = r'New-Item -ItemType Directory "C:\u\.claude\projects\P\memory"'
+        self.assertTrue(wa.is_terminal_forced("PowerShell", {"command": cmd}))
+        self.assertTrue(
+            wa.is_terminal_forced("Bash", {"command": "echo x >> ~/.claude/projects/p/memory/a.md"})
+        )
+
+    def test_write_tool_to_memory_md_not_forced(self):
+        # 写类工具写记忆 .md 根本不弹终端,不该误推提醒(projects 子串只对 shell 生效)
+        self.assertFalse(
+            wa.is_terminal_forced("Write", {"file_path": r"C:\u\.claude\projects\P\memory\a.md"})
+        )
+
+    def test_shell_to_normal_path_not_forced(self):
+        self.assertFalse(
+            wa.is_terminal_forced("PowerShell", {"command": r'New-Item -ItemType Directory "D:\x\y"'})
+        )
+
+    def test_master_switch_disables_shell_table_too(self):
+        # 主开关清空 -> 整套提醒(含 shell 专用表)关闭
+        code = (
+            "import watch_approve as w, sys;"
+            "sys.stdout.write(str(w.is_terminal_forced('Bash', {'command': '~/.claude/projects/p/memory/a'})))"
+        )
+        p = run_py(code, env=clean_env(WATCH_TERMINAL_FORCED_PATHS=""))
+        self.assertEqual(p.stdout.decode("utf-8").strip(), "False", p.stderr)
+
+
 class TestQuestionParsing(unittest.TestCase):
     TI = {
         "questions": [
